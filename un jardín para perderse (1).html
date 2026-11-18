@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>un jardín para perderse</title>
+<style>
+  :root{
+    --bg:#0b1f17; --text:#eafff0;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){ --bg:#0b1f17; --text:#eafff0; }
+  }
+  :root[data-theme="dark"]{ --bg:#0b1f17; --text:#eafff0; }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;overflow:hidden;background:var(--bg);}
+  html{scroll-padding-top:env(safe-area-inset-top,0px);}
+  body{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);}
+  canvas{display:block;}
+  #intro{
+    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:.6em;text-align:center;color:var(--text);
+    font-family:-apple-system,system-ui,Segoe UI,sans-serif;pointer-events:none;
+    text-shadow:0 0 20px rgba(0,0,0,.7);
+    animation:fade 7s ease forwards;
+  }
+  #intro h1{font-size:clamp(1.2rem,4vw,2rem);font-weight:300;letter-spacing:.1em;}
+  #intro p{font-size:.85rem;opacity:.75;}
+  @keyframes fade{0%,55%{opacity:1}100%{opacity:0}}
+</style>
+</head>
+<body>
+<div id="intro"><h1>un jardín para perderse</h1><p>wasd para moverte · el cursor para mirar · ten cuidado con los insectos</p></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@strudel/web@1.0.3"></script>
+<script>
+(function(){
+  const fogColor=0x8fcbdb;
+  const scene=new THREE.Scene();
+  scene.fog=new THREE.FogExp2(fogColor,0.035);
+  scene.background=new THREE.Color(fogColor);
+
+  const camera=new THREE.PerspectiveCamera(65, innerWidth/innerHeight, 0.1, 200);
+  camera.position.set(0,1.6,0);
+  camera.rotation.order='YXZ';
+
+  const renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(innerWidth,innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const hemi=new THREE.HemisphereLight(0xbfe8ff,0x274a33,0.8);
+  scene.add(hemi);
+  const sun=new THREE.DirectionalLight(0xfff1c9,0.9);
+  sun.position.set(5,10,2);
+  scene.add(sun);
+  const glow=new THREE.PointLight(0x9ee6b8,1.3,14);
+  glow.position.set(0,1.2,-2);
+  scene.add(glow);
+
+  const groundMat=new THREE.MeshStandardMaterial({color:0x13301f,roughness:1,transparent:true});
+  const ground=new THREE.Mesh(new THREE.PlaneGeometry(220,220),groundMat);
+  ground.rotation.x=-Math.PI/2;
+  scene.add(ground);
+
+  // ciclo día/tarde/noche
+  const dayStops=[
+    {t:0.00, fog:0x8fcbdb, sky:0xbfe8ff, ground:0x274a33, hemiI:0.8, sunC:0xfff1c9, sunI:0.9},
+    {t:0.28, fog:0x9fe2b0, sky:0xdfffe8, ground:0x1d3a26, hemiI:1.0, sunC:0xffffff, sunI:1.1},
+    {t:0.55, fog:0xff9a5a, sky:0xffd9a0, ground:0x3a2010, hemiI:0.6, sunC:0xffb066, sunI:0.6},
+    {t:0.78, fog:0x0b1f17, sky:0x16324a, ground:0x0b1f17, hemiI:0.3, sunC:0x9fc8ff, sunI:0.12}
+  ];
+  const dayLen=100;
+  const _c1=new THREE.Color(), _c2=new THREE.Color(), _black=new THREE.Color(0x000000);
+  function updateDay(t){
+    const ph=(t%dayLen)/dayLen;
+    let a=dayStops[dayStops.length-1], b=dayStops[0], f=0;
+    for(let i=0;i<dayStops.length;i++){
+      const cur=dayStops[i], next=dayStops[(i+1)%dayStops.length];
+      const nt = next.t>cur.t ? next.t : 1;
+      if(ph>=cur.t && ph<nt){ a=cur;b=next;f=(ph-cur.t)/(nt-cur.t); break; }
+    }
+    _c1.set(a.fog); _c2.set(b.fog); _c1.lerp(_c2,f);
+    scene.fog.color.copy(_c1); scene.background.copy(_c1);
+    _c1.set(a.sky); _c2.set(b.sky); hemi.color.copy(_c1.lerp(_c2,f));
+    _c1.set(a.ground); _c2.set(b.ground); hemi.groundColor.copy(_c1.lerp(_c2,f));
+    hemi.intensity=a.hemiI+(b.hemiI-a.hemiI)*f;
+    _c1.set(a.sunC); _c2.set(b.sunC); sun.color.copy(_c1.lerp(_c2,f));
+    sun.intensity=a.sunI+(b.sunI-a.sunI)*f;
+    return ph;
+  }
+
+  // árboles (más densos)
+  const trunkMat=new THREE.MeshStandardMaterial({color:0x3a2a1d,roughness:1,transparent:true});
+  const leafMat=new THREE.MeshStandardMaterial({color:0x2f6b43,roughness:0.85,transparent:true});
+  for(let i=0;i<58;i++){
+    const a=Math.random()*Math.PI*2, r=4+Math.random()*44;
+    const x=Math.cos(a)*r, z=Math.sin(a)*r;
+    const h=2+Math.random()*3;
+    const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.25,h,6),trunkMat);
+    trunk.position.set(x,h/2,z);
+    scene.add(trunk);
+    const leaves=new THREE.Mesh(new THREE.ConeGeometry(1+Math.random(),2+Math.random()*2,7),leafMat);
+    leaves.position.set(x,h+1,z);
+    scene.add(leaves);
+  }
+
+  // vegetación baja (pasto + arbustos, más densa)
+  const plantMat=new THREE.MeshStandardMaterial({color:0x4fae72,roughness:0.9,transparent:true});
+  const bushMat=new THREE.MeshStandardMaterial({color:0x3f8f5a,roughness:0.95,flatShading:true,transparent:true});
+  const plants=[];
+  for(let i=0;i<260;i++){
+    const a=Math.random()*Math.PI*2, r=1.5+Math.random()*36;
+    const x=Math.cos(a)*r, z=Math.sin(a)*r;
+    const s=0.15+Math.random()*0.35;
+    const bush=Math.random()<0.35;
+    const p=new THREE.Mesh(
+      bush ? new THREE.IcosahedronGeometry(s*0.9,0) : new THREE.ConeGeometry(s*0.6,s*2,5),
+      bush ? bushMat : plantMat
+    );
+    p.position.set(x, bush ? s*0.6 : s, z);
+    p.userData.base=p.position.y;
+    p.userData.ph=Math.random()*10;
+    plants.push(p);
+    scene.add(p);
+  }
+
+  // hongos
+  const mushStemMat=new THREE.MeshStandardMaterial({color:0xe8e0c8,roughness:0.9,transparent:true});
+  const mushCapMat=new THREE.MeshStandardMaterial({color:0xc23b3b,roughness:0.6,transparent:true,emissive:0x331010,emissiveIntensity:0.3});
+  for(let i=0;i<40;i++){
+    const a=Math.random()*Math.PI*2, r=1.5+Math.random()*30;
+    const x=Math.cos(a)*r, z=Math.sin(a)*r;
+    const s=0.08+Math.random()*0.1;
+    const stem=new THREE.Mesh(new THREE.CylinderGeometry(s*0.3,s*0.4,s*1.6,6),mushStemMat);
+    const cap=new THREE.Mesh(new THREE.SphereGeometry(s,8,6,0,Math.PI*2,0,Math.PI/2),mushCapMat);
+    cap.position.y=s*1.1;
+    const group=new THREE.Group();
+    group.add(stem,cap);
+    group.position.set(x,s*0.8,z);
+    scene.add(group);
+  }
+
+  // rocas
+  const rockMat=new THREE.MeshStandardMaterial({color:0x6b6b63,roughness:1,flatShading:true,transparent:true});
+  for(let i=0;i<30;i++){
+    const a=Math.random()*Math.PI*2, r=1.5+Math.random()*38;
+    const x=Math.cos(a)*r, z=Math.sin(a)*r;
+    const s=0.2+Math.random()*0.5;
+    const rock=new THREE.Mesh(new THREE.IcosahedronGeometry(s,0),rockMat);
+    rock.position.set(x,s*0.4,z);
+    rock.rotation.set(Math.random()*6,Math.random()*6,Math.random()*6);
+    scene.add(rock);
+  }
+
+  // animales del bosque: venados, ardillas y mapaches
+  const species=[
+    {name:'venado',  color:0x8a5a3a, n:5, bodyR:0.22, bodyL:0.9,  headR:0.16, legs:true,  tail:false, r0:6,  r1:20, sp0:0.08, sp1:0.08, hY:0.65},
+    {name:'ardilla', color:0x7a6248, n:6, bodyR:0.10, bodyL:0.26, headR:0.08, legs:false, tail:true,  r0:2,  r1:10, sp0:0.5,  sp1:0.4,  hY:0.18},
+    {name:'mapache', color:0x4a4a4a, n:4, bodyR:0.13, bodyL:0.34, headR:0.10, legs:false, tail:false, r0:3,  r1:14, sp0:0.18, sp1:0.15, hY:0.2}
+  ];
+  const furMats={};
+  const animals=[];
+  species.forEach(sp=>{
+    const mat=new THREE.MeshStandardMaterial({color:sp.color,roughness:1,transparent:true});
+    furMats[sp.name]=mat;
+    for(let i=0;i<sp.n;i++){
+      const group=new THREE.Group();
+      const body=new THREE.Mesh(new THREE.CylinderGeometry(sp.bodyR,sp.bodyR*1.1,sp.bodyL,6),mat);
+      body.rotation.z=Math.PI/2;
+      const head=new THREE.Mesh(new THREE.SphereGeometry(sp.headR,6,6),mat);
+      head.position.set(sp.bodyL/2+sp.headR*0.5, sp.headR*0.3, 0);
+      group.add(body,head);
+      if(sp.legs){
+        for(let L=0;L<4;L++){
+          const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,0.5,5),mat);
+          leg.position.set(L<2?0.28:-0.28, -0.45, L%2?0.15:-0.15);
+          group.add(leg);
+        }
+      }
+      if(sp.tail){
+        const tail=new THREE.Mesh(new THREE.ConeGeometry(0.07,0.32,5),mat);
+        tail.position.set(-sp.bodyL/2-0.05,0.14,0);
+        tail.rotation.z=Math.PI*0.65;
+        group.add(tail);
+      }
+      group.position.y=sp.hY;
+      group.userData={radius:sp.r0+Math.random()*(sp.r1-sp.r0), speed:sp.sp0+Math.random()*sp.sp1, offset:Math.random()*Math.PI*2};
+      animals.push(group);
+      scene.add(group);
+    }
+  });
+  function updateAnimals(t){
+    animals.forEach(g=>{
+      const {radius,speed,offset}=g.userData;
+      const a=t*speed+offset;
+      g.position.x=Math.cos(a)*radius;
+      g.position.z=Math.sin(a)*radius;
+      g.rotation.y=-a-Math.PI/2;
+    });
+  }
+
+  // insectos glitch: cuerpo + alas que aletean, clicables
+  const glitchColors=[0xff2bd6,0x2bffe0,0x8cff2b,0xffffff];
+  const bodyGeo=new THREE.SphereGeometry(0.08,6,6);
+  const wingGeo=new THREE.PlaneGeometry(0.14,0.07);
+  const insects=[];
+  for(let w=0; w<10; w++){
+    const mat=new THREE.MeshBasicMaterial({color:glitchColors[0],transparent:true,side:THREE.DoubleSide});
+    const body=new THREE.Mesh(bodyGeo,mat);
+    body.scale.set(1,0.6,1.6);
+    const wingL=new THREE.Mesh(wingGeo,mat);
+    wingL.position.set(0,0.03,-0.03);
+    const wingR=new THREE.Mesh(wingGeo,mat);
+    wingR.position.set(0,0.03,0.03);
+    const group=new THREE.Group();
+    group.add(body,wingL,wingR);
+    group.userData={mat,wingL,wingR,hit:body,radius:2+Math.random()*14,speed:0.3+Math.random()*0.4,offset:Math.random()*Math.PI*2,jx:0,jz:0};
+    insects.push(group);
+    scene.add(group);
+  }
+  function updateInsects(t){
+    insects.forEach(g=>{
+      const u=g.userData;
+      if(Math.random()<0.03){ u.jx=(Math.random()-0.5)*0.8; u.jz=(Math.random()-0.5)*0.8; }
+      const a=t*u.speed+u.offset;
+      g.position.set(Math.cos(a)*u.radius+u.jx, 0.5+Math.sin(t*1.5+u.offset)*0.3, Math.sin(a)*u.radius+u.jz);
+      g.rotation.y=-a-Math.PI/2;
+      u.wingL.rotation.z=Math.sin(t*25)*0.9;
+      u.wingR.rotation.z=-Math.sin(t*25)*0.9;
+      if(Math.random()<0.2) u.mat.color.set(glitchColors[(Math.random()*glitchColors.length)|0]);
+    });
+  }
+
+  // colapso del bosque al tocar un insecto
+  const raycaster=new THREE.Raycaster();
+  let collapsing=false, collapseT=0;
+  function startCollapse(){ if(!collapsing){ collapsing=true; collapseT=0; } }
+  addEventListener('pointerdown',e=>{
+    const ndc=new THREE.Vector2((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+    raycaster.setFromCamera(ndc,camera);
+    const targets=insects.map(g=>g.userData.hit);
+    if(raycaster.intersectObjects(targets)[0]) startCollapse();
+  });
+
+  // luciérnagas
+  const N=160, pos=new Float32Array(N*3);
+  for(let i=0;i<N;i++){
+    pos[i*3]=(Math.random()-0.5)*64;
+    pos[i*3+1]=0.3+Math.random()*2.6;
+    pos[i*3+2]=(Math.random()-0.5)*64;
+  }
+  const fireflyGeo=new THREE.BufferGeometry();
+  fireflyGeo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  const fireflies=new THREE.Points(fireflyGeo,new THREE.PointsMaterial({color:0xbfffd0,size:0.09,transparent:true,opacity:0.85}));
+  scene.add(fireflies);
+
+  let mx=0,my=0;
+  addEventListener('pointermove',e=>{
+    mx=(e.clientX/innerWidth-0.5)*2;
+    my=(e.clientY/innerHeight-0.5)*2;
+  });
+
+  const keys={};
+  addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
+  addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+  // sonido: todo sintetizado (sin muestras externas), para que no dependa de la red
+  const dayCode=`
+    setcps(0.5)
+    stack(
+      n("<0 2 4 [7,9]>/2").scale("D:minor").s("sine").attack(1.5).release(2)
+        .lpf(mousey.range(300,3000)).room(0.6).gain(0.4).pan(sine.slow(12)),
+      s("white*12").decay(0.04).sustain(0).degradeBy(0.5).pan(mousex)
+        .speed(perlin.range(0.7,1.8)).gain(0.25)
+        .sometimesBy(0.2, x=>x.crush(4).speed(3)),
+      n(mousex.segment(8).range(0,7)).scale("D:minor").s("triangle").degradeBy(0.5).jux(rev)
+        .room(mousey.range(0.1,0.9)).gain(0.3)
+    )
+  `;
+  const nightCode=`
+    setcps(0.3)
+    stack(
+      n("<0 3 5>/3").scale("D:minor").s("sine").attack(3).release(4)
+        .lpf(mousey.range(200,1200)).room(0.9).gain(0.3).pan(sine.slow(20)),
+      s("white*4").decay(0.05).sustain(0).degradeBy(0.75).pan(mousex)
+        .speed(perlin.range(0.5,1)).gain(0.2),
+      n(mousex.segment(6).range(0,7)).scale("D:minor").s("triangle").degradeBy(0.7).jux(rev)
+        .room(mousey.range(0.3,1)).gain(0.2)
+    )
+  `;
+  let soundStarted=false, isNight=false;
+  function startSound(){
+    if(soundStarted) return;
+    soundStarted=true;
+    initStrudel();
+    evaluate(dayCode);
+  }
+  addEventListener('pointerdown',startSound,{once:true});
+  addEventListener('keydown',startSound,{once:true});
+
+  let lastT=performance.now();
+  function animate(){
+    requestAnimationFrame(animate);
+    const now=performance.now();
+    const dt=Math.min((now-lastT)/1000,0.1);
+    lastT=now;
+    const t=now*0.001;
+
+    camera.rotation.y = mx*0.6;
+    camera.rotation.x = -my*0.25;
+
+    const yaw=camera.rotation.y;
+    const fx=-Math.sin(yaw), fz=-Math.cos(yaw);
+    const rx=Math.cos(yaw), rz=-Math.sin(yaw);
+    let mvx=0,mvz=0;
+    if(keys['w']){mvx+=fx;mvz+=fz;}
+    if(keys['s']){mvx-=fx;mvz-=fz;}
+    if(keys['d']){mvx+=rx;mvz+=rz;}
+    if(keys['a']){mvx-=rx;mvz-=rz;}
+    const len=Math.hypot(mvx,mvz);
+    if(len>0){
+      camera.position.x += mvx/len*4*dt;
+      camera.position.z += mvz/len*4*dt;
+    }
+
+    if(collapsing){
+      collapseT+=dt;
+      const k=Math.min(collapseT/3,1);
+      const op=1-k;
+      trunkMat.opacity=leafMat.opacity=plantMat.opacity=bushMat.opacity=rockMat.opacity=groundMat.opacity=mushStemMat.opacity=mushCapMat.opacity=op;
+      Object.values(furMats).forEach(m=>{ m.opacity=op; });
+      hemi.intensity*=(1-dt*1.1);
+      sun.intensity*=(1-dt*1.1);
+      glow.intensity*=(1-dt*1.1);
+      scene.fog.density=0.035+k*1.6;
+      scene.fog.color.lerp(_black,dt*1.6);
+      scene.background.lerp(_black,dt*1.6);
+      camera.position.x+=(Math.random()-0.5)*0.06*k;
+      camera.position.y=1.6+(Math.random()-0.5)*0.06*k;
+      camera.rotation.z=(Math.random()-0.5)*0.08*k;
+      if(collapseT>3.6){ location.reload(); return; }
+    } else {
+      const ph=updateDay(t);
+      camera.rotation.z=0;
+      const night = ph>=0.55;
+      if(soundStarted && night!==isNight){ evaluate(night?nightCode:dayCode); }
+      isNight=night;
+    }
+
+    plants.forEach(p=>{ p.position.y=p.userData.base+Math.sin(t+p.userData.ph)*0.03; });
+    fireflies.rotation.y=t*0.02;
+    updateInsects(t);
+    updateAnimals(t);
+    renderer.render(scene,camera);
+  }
+  animate();
+
+  addEventListener('resize',()=>{
+    camera.aspect=innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+  });
+})();
+</script>
+</body>
+</html>
